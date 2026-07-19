@@ -44,3 +44,5 @@ Cuando actualices `google_apps_script.gs`, vuelve a desplegar una nueva version 
 Los estudiantes estan en `data/students.json`, importados desde la lista original.
 
 Las exportaciones generales salen en Excel `.xlsx`. El observador individual se descarga como documento HTML imprimible para conservar observaciones y firmas.
+
+El resumen principal permite filtrar por periodo, curso y modalidad. Para que asistencia, observador y atencion a padres queden por periodo, usa tambien el `google_apps_script.gs` incluido en este paquete.
