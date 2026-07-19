@@ -2612,6 +2612,29 @@ const normalize = (value) => String(value || "").toLowerCase().normalize("NFD").
 const htmlEscape = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 const makeId = () => globalThis.crypto?.randomUUID?.() || `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
+function normalizeDateValue(value) {
+  if (!value) return "";
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  const text = String(value);
+  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? text : parsed.toISOString().slice(0, 10);
+}
+
+function normalizeRecordDates(record) {
+  const normalized = { ...record };
+  ["date", "activityDate"].forEach((field) => {
+    if (field in normalized) normalized[field] = normalizeDateValue(normalized[field]);
+  });
+  if (Array.isArray(normalized.activities)) {
+    normalized.activities = normalized.activities.map((activity) => ({
+      ...activity,
+      date: normalizeDateValue(activity.date),
+    }));
+  }
+  return normalized;
+}
+
 function save(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
 }
@@ -2634,7 +2657,8 @@ function rebuildStudents() {
 function mergeById(localRows, remoteRows) {
   const rows = new Map();
   [...localRows, ...remoteRows].forEach((row) => {
-    if (row?.id) rows.set(row.id, { ...rows.get(row.id), ...row });
+    const normalized = normalizeRecordDates(row);
+    if (normalized?.id) rows.set(normalized.id, { ...rows.get(normalized.id), ...normalized });
   });
   return [...rows.values()];
 }
@@ -2642,7 +2666,22 @@ function mergeById(localRows, remoteRows) {
 function mergeByKey(localRows, remoteRows) {
   const rows = new Map();
   [...localRows, ...remoteRows].forEach((row) => {
-    if (row?.key) rows.set(row.key, { ...rows.get(row.key), ...row });
+    const normalized = normalizeRecordDates(row);
+    if (normalized?.key) rows.set(normalized.key, { ...rows.get(normalized.key), ...normalized });
+  });
+  return [...rows.values()];
+}
+
+function mergeAttendance(localRows, remoteRows) {
+  const rows = new Map();
+  [...localRows, ...remoteRows].forEach((row) => {
+    const normalized = normalizeRecordDates(row);
+    if (!normalized?.studentId || !normalized.date) return;
+    const key = `${normalized.date}|${normalized.studentId}`;
+    const previous = rows.get(key);
+    if (!previous || String(normalized.createdAt || "").localeCompare(String(previous.createdAt || "")) >= 0) {
+      rows.set(key, { ...previous, ...normalized });
+    }
   });
   return [...rows.values()];
 }
@@ -3782,7 +3821,7 @@ function applyRemoteData(data, options = {}) {
     return false;
   }
 
-  state.attendance = mergeById(state.attendance, data.attendance || []);
+  state.attendance = mergeAttendance(state.attendance, data.attendance || []);
   state.notes = mergeById(state.notes, data.notes || []);
   state.parents = mergeById(state.parents, data.parents || []);
   state.contacts = mergeById(state.contacts, data.contacts || []);
