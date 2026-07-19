@@ -33,6 +33,11 @@ Si usas el archivo portable `index.html`, el escudo institucional ya queda inclu
 4. Implementar como aplicacion web.
 5. Copiar la URL del despliegue.
 6. Pegarla en `Ajustes > URL del endpoint` dentro de la app.
+7. Al abrir o actualizar la app, se cargan automaticamente los datos de Google Sheets.
+8. Cada vez que se guarda asistencia, observador, contacto, estudiante, atencion a padres o notas, la app envia automaticamente los cambios a Google Sheets.
+9. El boton `Actualizar ahora` queda como respaldo manual para cargar y enviar en un solo paso.
+
+Cuando actualices `google_apps_script.gs`, vuelve a desplegar una nueva version de la aplicacion web en Apps Script para que la URL use el codigo nuevo.
 
 ## Datos
 

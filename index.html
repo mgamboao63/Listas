@@ -899,7 +899,7 @@ canvas {
               </label>
               <div class="toolbar">
                 <button id="saveSettings" class="primary">Guardar conexion</button>
-                <button id="syncNow">Sincronizar</button>
+                <button id="syncNow">Actualizar ahora</button>
               </div>
               <p class="muted" id="syncStatus">Sin conexion activa</p>
             </section>
@@ -2571,6 +2571,7 @@ canvas {
 ];</script>
     <script>
 ﻿const state = {
+  baseStudents: [],
   students: [],
   attendance: JSON.parse(localStorage.getItem("od_attendance") || "[]"),
   notes: JSON.parse(localStorage.getItem("od_notes") || "[]"),
@@ -2584,9 +2585,12 @@ canvas {
   signature: "",
   teacherSignature: "",
   toastTimer: null,
+  syncTimer: null,
+  syncing: false,
+  syncAgain: false,
 };
 
-const DEFAULT_API_ENDPOINT = "https://script.google.com/macros/s/AKfycbyWt6zF2Hm_RX4xUl0CduJZZ8Qxe1lPTmVoXPpE5AEOhszRJsCLzbMBT7X8h8t5LZE4/exec";
+const DEFAULT_API_ENDPOINT = "https://script.google.com/macros/s/AKfycbwhPoUVhb32ePUmaMoUWSHHR95HuDpmc1v0kNC9_hT6EHVvNtcWKNI_QAiIou1qnF2A/exec";
 const SCHOOL_NAME = "BRASILIA BOSA IED";
 
 const views = [
@@ -2606,6 +2610,54 @@ const makeId = () => globalThis.crypto?.randomUUID?.() || `id-${Date.now()}-${Ma
 
 function save(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
+}
+
+function rebuildStudents() {
+  const customIds = new Set(state.customStudents.map((student) => student.id));
+  state.students = state.baseStudents.filter((student) => !customIds.has(student.id)).concat(state.customStudents);
+}
+
+function mergeById(localRows, remoteRows) {
+  const rows = new Map();
+  [...localRows, ...remoteRows].forEach((row) => {
+    if (row?.id) rows.set(row.id, { ...rows.get(row.id), ...row });
+  });
+  return [...rows.values()];
+}
+
+function mergeByKey(localRows, remoteRows) {
+  const rows = new Map();
+  [...localRows, ...remoteRows].forEach((row) => {
+    if (row?.key) rows.set(row.key, { ...rows.get(row.key), ...row });
+  });
+  return [...rows.values()];
+}
+
+function persistSyncedState() {
+  save("od_attendance", state.attendance);
+  save("od_notes", state.notes);
+  save("od_parents", state.parents);
+  save("od_contacts", state.contacts);
+  save("od_custom_students", state.customStudents);
+  save("od_grades", state.grades);
+  save("od_grade_plans", state.gradePlans);
+}
+
+function refreshAfterDataChange() {
+  rebuildStudents();
+  refreshDynamicLists();
+  renderDashboard();
+  renderAttendance();
+  renderNotes();
+  renderParents();
+  renderGrades();
+}
+
+function scheduleAutoSync(reason = "cambios guardados") {
+  clearTimeout(state.syncTimer);
+  state.syncTimer = setTimeout(() => {
+    syncNow({ automatic: true, reason });
+  }, 700);
 }
 
 function showToast(message, type = "success") {
@@ -2792,6 +2844,7 @@ function saveAttendance() {
   renderDashboard();
   renderAttendance();
   showStatus("attendanceStatus", `Asistencia guardada satisfactoriamente: ${newRecords.length} registros.`);
+  scheduleAutoSync("asistencia");
 }
 
 function markAllV() {
@@ -3049,6 +3102,7 @@ function saveGrades() {
   save("od_grades", state.grades);
   renderGrades();
   showStatus("gradesStatus", `Notas guardadas satisfactoriamente: ${records.length} estudiantes.`);
+  scheduleAutoSync("notas");
 }
 
 function updateStudentSelects() {
@@ -3140,6 +3194,7 @@ function submitContact(event) {
   event.currentTarget.reset();
   renderParents();
   showStatus("contactStatus", "Ficha de contacto guardada satisfactoriamente.");
+  scheduleAutoSync("contactos");
 }
 
 function loadContactForm() {
@@ -3202,6 +3257,7 @@ function submitNewStudent(event) {
   renderParents();
   renderAttendance();
   showStatus("newStudentStatus", `Estudiante registrado satisfactoriamente: ${student.name}.`);
+  scheduleAutoSync("estudiante nuevo");
 }
 
 function setupSignaturePad(canvasId, clearButtonId, stateKey) {
@@ -3284,6 +3340,7 @@ function submitNote(event) {
   renderNotes();
   renderDashboard();
   showStatus("observerStatus", "Anotacion registrada satisfactoriamente.");
+  scheduleAutoSync("observador");
 }
 
 function submitParent(event) {
@@ -3304,6 +3361,7 @@ function submitParent(event) {
   event.currentTarget.elements.date.value = today();
   renderParents();
   showStatus("parentStatus", "Atencion a padres registrada satisfactoriamente.");
+  scheduleAutoSync("atencion a padres");
 }
 
 function exportFinalGradesXlsx() {
@@ -3653,18 +3711,23 @@ function enrichGrade(record) {
   };
 }
 
-async function syncNow() {
+async function syncNow(options = {}) {
   const endpoint = $("apiEndpoint").value.trim();
   const status = $("syncStatus");
   if (!endpoint) {
-    showStatus("syncStatus", "Falta el endpoint de Google Apps Script.", "error");
+    if (!options.automatic) showStatus("syncStatus", "Falta el endpoint de Google Apps Script.", "error");
     return;
   }
-  status.textContent = "Sincronizando...";
+  if (state.syncing) {
+    state.syncAgain = true;
+    return;
+  }
+  state.syncing = true;
+  status.textContent = options.automatic ? `Guardando en Google Sheets (${options.reason || "automatico"})...` : "Sincronizando...";
   try {
     const response = await fetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify({
         apiKey: $("apiKey").value,
         teacher: currentTeacher(),
@@ -3678,13 +3741,71 @@ async function syncNow() {
       }),
     });
     if (response.ok) {
-      showStatus("syncStatus", "Sincronizacion enviada satisfactoriamente.");
+      const message = options.automatic ? "Cambios guardados tambien en Google Sheets." : "Sincronizacion enviada satisfactoriamente.";
+      if (options.automatic) {
+        status.textContent = message;
+      } else {
+        showStatus("syncStatus", message);
+      }
     } else {
       showStatus("syncStatus", "No se pudo sincronizar con Google Sheets.", "error");
     }
   } catch {
     showStatus("syncStatus", "No se pudo conectar con el endpoint.", "error");
+  } finally {
+    state.syncing = false;
+    if (state.syncAgain) {
+      state.syncAgain = false;
+      scheduleAutoSync("cambios pendientes");
+    }
   }
+}
+
+async function loadFromSheets(options = {}) {
+  const endpoint = $("apiEndpoint").value.trim();
+  const status = $("syncStatus");
+  if (!endpoint) {
+    if (!options.silent) showStatus("syncStatus", "Falta el endpoint de Google Apps Script.", "error");
+    return;
+  }
+  status.textContent = options.silent ? "Actualizando desde Google Sheets..." : "Cargando datos desde Google Sheets...";
+  try {
+    const response = await fetch(`${endpoint}${endpoint.includes("?") ? "&" : "?"}t=${Date.now()}`);
+    if (!response.ok) {
+      if (!options.silent) showStatus("syncStatus", "No se pudieron cargar los datos de Google Sheets.", "error");
+      else status.textContent = "No se pudieron cargar los datos de Google Sheets.";
+      return;
+    }
+    const data = await response.json();
+    if (!data.ok) {
+      if (!options.silent) showStatus("syncStatus", "Google Sheets respondio, pero no entrego datos validos.", "error");
+      else status.textContent = "Google Sheets no entrego datos validos.";
+      return;
+    }
+
+    state.attendance = mergeById(state.attendance, data.attendance || []);
+    state.notes = mergeById(state.notes, data.notes || []);
+    state.parents = mergeById(state.parents, data.parents || []);
+    state.contacts = mergeById(state.contacts, data.contacts || []);
+    state.customStudents = mergeById(state.customStudents, data.students || []);
+    state.grades = mergeById(state.grades, data.grades || []);
+    state.gradePlans = mergeByKey(state.gradePlans, data.gradePlans || []);
+    persistSyncedState();
+    refreshAfterDataChange();
+    if (options.silent) {
+      status.textContent = "Datos actualizados desde Google Sheets.";
+    } else {
+      showStatus("syncStatus", "Datos cargados desde Google Sheets satisfactoriamente.");
+    }
+  } catch {
+    if (!options.silent) showStatus("syncStatus", "No se pudo leer Google Sheets desde este dispositivo.", "error");
+    else status.textContent = "No se pudo leer Google Sheets desde este dispositivo.";
+  }
+}
+
+async function refreshCloudNow() {
+  await loadFromSheets();
+  await syncNow();
 }
 
 function wireEvents() {
@@ -3707,16 +3828,16 @@ function wireEvents() {
     save("od_settings", state.settings);
     showStatus("syncStatus", "Conexion guardada satisfactoriamente.");
   });
-  $("syncNow").addEventListener("click", syncNow);
+  $("syncNow").addEventListener("click", refreshCloudNow);
   document.querySelectorAll("[data-export]").forEach((button) => {
     button.addEventListener("click", () => exportData(button.dataset.export));
   });
 }
 
 async function init() {
-  const baseStudents = window.OBSERVADOR_STUDENTS || [];
-  const customIds = new Set(state.customStudents.map((student) => student.id));
-  state.students = baseStudents.filter((student) => !customIds.has(student.id)).concat(state.customStudents);
+  const response = await fetch("./data/students.json");
+  state.baseStudents = await response.json();
+  rebuildStudents();
   buildNav();
   refreshDynamicLists();
   ["dashboardDate", "attendanceDate"].forEach((id) => ($(id).value = today()));
@@ -3728,6 +3849,7 @@ async function init() {
   wireEvents();
   setupSignature();
   setView("dashboard");
+  loadFromSheets({ silent: true });
 }
 
 init();
