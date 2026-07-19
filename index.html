@@ -2592,6 +2592,9 @@ canvas {
 };
 
 const DEFAULT_API_ENDPOINT = "https://script.google.com/macros/s/AKfycbwhPoUVhb32ePUmaMoUWSHHR95HuDpmc1v0kNC9_hT6EHVvNtcWKNI_QAiIou1qnF2A/exec";
+const OLD_API_ENDPOINTS = [
+  "https://script.google.com/macros/s/AKfycbyWt6zF2Hm_RX4xUl0CduJZZ8Qxe1lPTmVoXPpE5AEOhszRJsCLzbMBT7X8h8t5LZE4/exec",
+];
 const SCHOOL_NAME = "BRASILIA BOSA IED";
 
 const views = [
@@ -2611,6 +2614,16 @@ const makeId = () => globalThis.crypto?.randomUUID?.() || `id-${Date.now()}-${Ma
 
 function save(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
+}
+
+function currentEndpointSetting() {
+  const saved = String(state.settings.endpoint || "").trim();
+  if (!saved || OLD_API_ENDPOINTS.includes(saved)) {
+    state.settings.endpoint = DEFAULT_API_ENDPOINT;
+    save("od_settings", state.settings);
+    return DEFAULT_API_ENDPOINT;
+  }
+  return saved;
 }
 
 function rebuildStudents() {
@@ -3762,6 +3775,51 @@ async function syncNow(options = {}) {
   }
 }
 
+function applyRemoteData(data, options = {}) {
+  if (!data.ok) {
+    if (!options.silent) showStatus("syncStatus", "Google Sheets respondio, pero no entrego datos validos.", "error");
+    else $("syncStatus").textContent = "Google Sheets no entrego datos validos.";
+    return false;
+  }
+
+  state.attendance = mergeById(state.attendance, data.attendance || []);
+  state.notes = mergeById(state.notes, data.notes || []);
+  state.parents = mergeById(state.parents, data.parents || []);
+  state.contacts = mergeById(state.contacts, data.contacts || []);
+  state.customStudents = mergeById(state.customStudents, data.students || []);
+  state.grades = mergeById(state.grades, data.grades || []);
+  state.gradePlans = mergeByKey(state.gradePlans, data.gradePlans || []);
+  persistSyncedState();
+  refreshAfterDataChange();
+  if (options.silent) {
+    $("syncStatus").textContent = "Datos actualizados desde Google Sheets.";
+  } else {
+    showStatus("syncStatus", "Datos cargados desde Google Sheets satisfactoriamente.");
+  }
+  return true;
+}
+
+function loadFromSheetsJsonp(endpoint) {
+  return new Promise((resolve, reject) => {
+    const callbackName = `observadorSheets_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const script = document.createElement("script");
+    const cleanup = () => {
+      delete window[callbackName];
+      script.remove();
+    };
+    window[callbackName] = (data) => {
+      cleanup();
+      resolve(data);
+    };
+    script.onerror = () => {
+      cleanup();
+      reject(new Error("JSONP error"));
+    };
+    script.src = `${endpoint}${endpoint.includes("?") ? "&" : "?"}callback=${callbackName}&t=${Date.now()}`;
+    document.body.append(script);
+  });
+}
+
 async function loadFromSheets(options = {}) {
   const endpoint = $("apiEndpoint").value.trim();
   const status = $("syncStatus");
@@ -3778,29 +3836,15 @@ async function loadFromSheets(options = {}) {
       return;
     }
     const data = await response.json();
-    if (!data.ok) {
-      if (!options.silent) showStatus("syncStatus", "Google Sheets respondio, pero no entrego datos validos.", "error");
-      else status.textContent = "Google Sheets no entrego datos validos.";
-      return;
-    }
-
-    state.attendance = mergeById(state.attendance, data.attendance || []);
-    state.notes = mergeById(state.notes, data.notes || []);
-    state.parents = mergeById(state.parents, data.parents || []);
-    state.contacts = mergeById(state.contacts, data.contacts || []);
-    state.customStudents = mergeById(state.customStudents, data.students || []);
-    state.grades = mergeById(state.grades, data.grades || []);
-    state.gradePlans = mergeByKey(state.gradePlans, data.gradePlans || []);
-    persistSyncedState();
-    refreshAfterDataChange();
-    if (options.silent) {
-      status.textContent = "Datos actualizados desde Google Sheets.";
-    } else {
-      showStatus("syncStatus", "Datos cargados desde Google Sheets satisfactoriamente.");
-    }
+    applyRemoteData(data, options);
   } catch {
-    if (!options.silent) showStatus("syncStatus", "No se pudo leer Google Sheets desde este dispositivo.", "error");
-    else status.textContent = "No se pudo leer Google Sheets desde este dispositivo.";
+    try {
+      const data = await loadFromSheetsJsonp(endpoint);
+      applyRemoteData(data, options);
+    } catch {
+      if (!options.silent) showStatus("syncStatus", "No se pudo leer Google Sheets desde este dispositivo.", "error");
+      else status.textContent = "No se pudo leer Google Sheets desde este dispositivo.";
+    }
   }
 }
 
@@ -3853,7 +3897,7 @@ async function init() {
   ["dashboardDate", "attendanceDate"].forEach((id) => ($(id).value = today()));
   document.querySelector("#observerForm [name='date']").value = today();
   document.querySelector("#parentForm [name='date']").value = today();
-  $("apiEndpoint").value = state.settings.endpoint || DEFAULT_API_ENDPOINT;
+  $("apiEndpoint").value = currentEndpointSetting();
   $("apiKey").value = state.settings.apiKey || "";
   $("todayLabel").textContent = new Intl.DateTimeFormat("es-CO", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date());
   wireEvents();
