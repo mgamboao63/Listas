@@ -1869,7 +1869,7 @@ canvas {
     "document": "",
     "name": "VILLAFAÑE VARELA LUIS FERNANDO",
     "course": "1004",
-    "modality": "EYE 11",
+    "modality": "EYE10",
     "active": "Si"
   },
   {
@@ -2568,7 +2568,8 @@ canvas {
     "modality": "DM11",
     "active": "Si"
   }
-];</script>
+]
+;</script>
     <script>
 ﻿const state = {
   baseStudents: [],
@@ -3835,10 +3836,19 @@ function wireEvents() {
 }
 
 async function init() {
-  const response = await fetch("./data/students.json");
-  state.baseStudents = await response.json();
-  rebuildStudents();
   buildNav();
+  if (Array.isArray(window.OBSERVADOR_STUDENTS)) {
+    state.baseStudents = window.OBSERVADOR_STUDENTS;
+  } else {
+    try {
+      const response = await fetch("./data/students.json");
+      state.baseStudents = await response.json();
+    } catch {
+      state.baseStudents = [];
+      showStatus("syncStatus", "No se encontro la lista de estudiantes. Sube el index.html portable o la carpeta data.", "error");
+    }
+  }
+  rebuildStudents();
   refreshDynamicLists();
   ["dashboardDate", "attendanceDate"].forEach((id) => ($(id).value = today()));
   document.querySelector("#observerForm [name='date']").value = today();
