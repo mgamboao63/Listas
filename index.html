@@ -319,6 +319,15 @@ h2 {
   border-top: 4px solid var(--sky);
 }
 
+.filters.compact {
+  margin-bottom: 14px;
+  box-shadow: none;
+}
+
+.hidden-control {
+  display: none;
+}
+
 .filters.sticky {
   position: sticky;
   top: 12px;
@@ -992,6 +1001,37 @@ canvas {
               <div class="ranking" id="parentRanking"></div>
             </section>
           </div>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Notas finales por curso</h2>
+              <button class="ghost" id="exportSummaryCourseFinalGrades" type="button">Exportar final + fallas</button>
+            </div>
+            <div class="filters compact">
+              <label>Periodo
+                <select id="summaryGradePeriod">
+                  <option value="1">Periodo 1</option>
+                  <option value="2">Periodo 2</option>
+                  <option value="3">Periodo 3</option>
+                </select>
+              </label>
+              <label>Docente
+                <select id="summaryGradeTeacher">
+                  <option>Milton Gamboa</option>
+                  <option>Stevens Bislik</option>
+                  <option>Cristian Rodriguez</option>
+                  <option>Andres Carlosama</option>
+                </select>
+              </label>
+              <label>Curso <select id="summaryGradeCourse"></select></label>
+            </div>
+            <div class="grade-table-wrap">
+              <table class="grade-table grade-summary-table">
+                <thead id="summaryGradeHead"></thead>
+                <tbody id="summaryGradeBody"></tbody>
+              </table>
+            </div>
+            <p class="muted status-line" id="summaryGradeStatus"></p>
+          </section>
         </section>
 
         <section class="view" id="attendanceView">
@@ -1090,8 +1130,8 @@ canvas {
                 <option value="3">Periodo 3</option>
               </select>
             </label>
-            <label>Curso <select id="gradesCourse"></select></label>
             <label>Modalidad <select id="gradesModality"></select></label>
+            <label class="hidden-control">Curso <select id="gradesCourse"></select></label>
             <input id="gradesSearch" type="search" placeholder="Buscar estudiante" />
           </div>
           <section class="panel">
@@ -3035,6 +3075,7 @@ function refreshAfterDataChange() {
   renderStudentAttendanceSummary();
   renderParents();
   renderGrades();
+  renderSummaryGradePreview();
 }
 
 function scheduleAutoSync(reason = "cambios guardados") {
@@ -3075,6 +3116,7 @@ function refreshDynamicLists() {
   ["dashboardModality", "attendanceModality"].forEach((id) => fillSelect($(id), modalities, "Todas"));
   fillSelect($("gradesCourse"), courses, "Todos");
   fillSelect($("gradesModality"), modalities, "Todas");
+  fillSelect($("summaryGradeCourse"), courses, "Todos");
   fillSelect($("noteCourse"), courses, "Todos");
   updateStudentSelects();
   updateNoteStudents();
@@ -3167,6 +3209,8 @@ function renderDashboard() {
   renderAttendanceSummaryRanking("lateRanking", "R", records);
   renderEventSummaryRanking("noteRanking", notes, "observacion");
   renderEventSummaryRanking("parentRanking", parents, "citacion");
+  if (period !== "Todos" && $("summaryGradePeriod")) $("summaryGradePeriod").value = period;
+  renderSummaryGradePreview();
 }
 
 function renderAttendanceSummaryRanking(targetId, mark, records) {
@@ -3354,22 +3398,33 @@ function calculateGrade(scores, attitude, selfEval, coEval) {
 }
 
 function getGradeRecord(studentId, period, course, modality) {
-  return state.grades.find((record) => (
+  const student = state.students.find((item) => item.id === studentId) || {};
+  const matches = state.grades.filter((record) => (
     record.studentId === studentId &&
     String(record.period) === String(period) &&
-    record.course === course &&
-    record.modality === modality
-  ));
-}
-
-function findGradeForStudent(student, period, course, modality) {
-  const matches = state.grades.filter((record) => (
-    record.studentId === student.id &&
-    String(record.period) === String(period) &&
-    (course === "Todos" || record.course === course || record.course === student.course) &&
+    (course === "Todos" || record.course === course || record.course === "Todos" || record.course === student.course) &&
     (modality === "Todas" || record.modality === modality || record.modality === student.modality)
   ));
   return matches.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")))[0] || null;
+}
+
+function findGradeForStudent(student, period, course, modality, teacher = "Todos") {
+  const matches = state.grades.filter((record) => (
+    record.studentId === student.id &&
+    String(record.period) === String(period) &&
+    (teacher === "Todos" || String(record.teacher || "").trim() === String(teacher).trim()) &&
+    (course === "Todos" || record.course === course || record.course === "Todos" || record.course === student.course) &&
+    (modality === "Todas" || record.modality === modality || record.modality === student.modality)
+  ));
+  return matches.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")))[0] || null;
+}
+
+function gradeMatchesStudent(record, student, period, course = "Todos", modality = "Todas") {
+  return Boolean(record && student) &&
+    record.studentId === student.id &&
+    String(record.period) === String(period) &&
+    (course === "Todos" || student.course === course || record.course === course || record.course === "Todos") &&
+    (modality === "Todas" || student.modality === modality || record.modality === modality);
 }
 
 function renderActivityGrid(plan) {
@@ -3406,7 +3461,7 @@ function updateGradeColumnHeadersFromActivities() {
 
 function renderGrades() {
   const period = $("gradesPeriod").value;
-  const course = $("gradesCourse").value;
+  const course = "Todos";
   const modality = $("gradesModality").value;
   const search = $("gradesSearch").value;
   const plan = getGradePlan(period, course, modality);
@@ -3437,7 +3492,7 @@ function renderGrades() {
     const row = document.createElement("tr");
     row.dataset.studentId = student.id;
     row.innerHTML = `
-      <td><strong>${student.name}</strong><span>${student.id} · ${student.course} · ${student.modality}</span></td>
+      <td><strong>${student.name}</strong><span>${student.id} · ${student.course}</span></td>
       ${Array.from({ length: 10 }, (_, index) => `<td><input class="grade-input" inputmode="decimal" data-score="${index}" value="${scores[index] ?? ""}" /></td>`).join("")}
       <td data-result="hetero">${calc.hetero ?? ""}</td>
       <td><input class="grade-input" inputmode="decimal" data-axio="attitude" value="${record.attitude ?? ""}" /></td>
@@ -3450,6 +3505,55 @@ function renderGrades() {
   });
   validateGradeInputs();
   $("gradesStatus").textContent = "Rango permitido: 1.0 a 5.0. Las casillas vacias se omiten del promedio.";
+  renderSummaryGradePreview();
+}
+
+function failuresForStudentPeriod(studentId, period) {
+  return state.attendance.filter((record) => (
+    record.studentId === studentId &&
+    record.mark === "F" &&
+    String(record.period || "") === String(period)
+  )).length;
+}
+
+function summaryCourseGradeRows() {
+  const period = $("summaryGradePeriod")?.value || $("gradesPeriod").value;
+  const teacher = $("summaryGradeTeacher")?.value || "Todos";
+  const course = $("summaryGradeCourse")?.value || "Todos";
+  return filteredStudents(course, "Todas")
+    .map((student) => {
+      const grade = findGradeForStudent(student, period, course, "Todas", teacher);
+      return { student, grade, failures: failuresForStudentPeriod(student.id, period), period, teacher };
+    })
+    .sort((a, b) => a.student.name.localeCompare(b.student.name, "es", { sensitivity: "base" }));
+}
+
+function renderSummaryGradePreview() {
+  const head = $("summaryGradeHead");
+  const body = $("summaryGradeBody");
+  if (!head || !body) return;
+  const rows = summaryCourseGradeRows();
+  const withGrade = rows.filter((row) => row.grade?.final !== null && row.grade?.final !== undefined).length;
+  head.innerHTML = `
+    <tr>
+      <th>Estudiante</th>
+      <th>Curso</th>
+      <th>Docente</th>
+      <th>Nota final</th>
+      <th>Fallas</th>
+    </tr>
+  `;
+  body.innerHTML = rows.length ? rows.map(({ student, grade, failures, teacher }) => `
+    <tr>
+      <td><strong>${htmlEscape(student.name)}</strong><span>${htmlEscape(student.id)}</span></td>
+      <td>${htmlEscape(student.course)}</td>
+      <td>${htmlEscape(teacher)}</td>
+      <td data-result="final"><strong>${grade?.final ?? ""}</strong></td>
+      <td>${failures}</td>
+    </tr>
+  `).join("") : `<tr><td colspan="5">Sin estudiantes para este filtro.</td></tr>`;
+  const status = $("summaryGradeStatus");
+  if (status) status.textContent = `${rows.length} estudiantes · ${withGrade} con nota final registrada.`;
 }
 
 function validateGradeInputs() {
@@ -3512,8 +3616,12 @@ function saveGrades() {
     return;
   }
   const period = $("gradesPeriod").value;
-  const course = $("gradesCourse").value;
+  const course = "Todos";
   const modality = $("gradesModality").value;
+  if (modality === "Todas") {
+    showStatus("gradesStatus", "Selecciona una modalidad para guardar notas.", "error");
+    return;
+  }
   const key = gradeKey(period, course, modality);
   const activities = Array.from({ length: 10 }, (_, index) => ({
     title: document.querySelector(`[data-activity-title="${index}"]`).value || `Actividad ${index + 1}`,
@@ -3554,7 +3662,6 @@ function saveGrades() {
   state.grades = state.grades.filter((record) => !(
     touchedIds.has(record.studentId) &&
     String(record.period) === String(period) &&
-    record.course === course &&
     record.modality === modality
   )).concat(records);
   save("od_grades", state.grades);
@@ -3826,7 +3933,7 @@ function submitParent(event) {
 
 function exportFinalGradesXlsx() {
   const period = $("gradesPeriod").value;
-  const course = $("gradesCourse").value;
+  const course = "Todos";
   const modality = $("gradesModality").value;
   const search = $("gradesSearch").value;
   const rows = filteredStudents(course, modality, search).map((student) => {
@@ -3840,6 +3947,20 @@ function exportFinalGradesXlsx() {
     };
   });
   downloadXlsx(`notas_finales_periodo_${period}`, "NotasFinales", rows);
+}
+
+function exportSummaryCourseFinalGrades() {
+  const period = $("summaryGradePeriod").value;
+  const teacher = $("summaryGradeTeacher").value;
+  const course = $("summaryGradeCourse").value;
+  const rows = summaryCourseGradeRows().map(({ student, grade, failures }) => ({
+    "Apellidos y nombres": student.name,
+    "Curso": student.course,
+    "Docente": teacher,
+    "Nota final": grade?.final ?? "",
+    "Fallas": failures,
+  }));
+  downloadXlsx(`notas_finales_${course}_${teacher}_periodo_${period}`, "FinalFallas", rows);
 }
 
 function downloadXlsx(fileName, sheetName, rows) {
@@ -3990,9 +4111,10 @@ function buildStudentReportHtml({ student, attendance, attendanceTotals, notes, 
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
   const markLabel = { V: "Vino", R: "Retardo", F: "Falla" };
   const generatedAt = new Intl.DateTimeFormat("es-CO", { dateStyle: "long", timeStyle: "short" }).format(new Date());
-  const attendanceRows = attendance.length ? attendance.map((record) => `
+  const attendanceIncidents = attendance.filter((record) => record.mark === "F" || record.mark === "R");
+  const attendanceRows = attendanceIncidents.length ? attendanceIncidents.map((record) => `
     <tr><td>${esc(record.date)}</td><td>${esc(record.period || "")}</td><td>${esc(record.mark)}</td><td>${esc(markLabel[record.mark] || "")}</td><td>${esc(record.justified || "No")}</td><td>${esc(record.teacher)}</td></tr>
-  `).join("") : `<tr><td colspan="6">Sin registros de asistencia.</td></tr>`;
+  `).join("") : `<tr><td colspan="6">Sin fallas ni retardos registrados.</td></tr>`;
   const noteRows = notes.length ? notes.map((record) => `
     <article class="entry">
       <div class="entry-head">${esc(record.date)} · ${esc(record.type)} · ${esc(record.teacher)}</div>
@@ -4071,7 +4193,7 @@ function buildStudentReportHtml({ student, attendance, attendanceTotals, notes, 
       <div class="box"><small>Curso</small>${esc(student.course)}</div>
       <div class="box"><small>Modalidad</small>${esc(student.modality)}</div>
     </section>
-    <h2>Asistencia</h2>
+    <h2>Novedades de asistencia</h2>
     <section class="meta">
       <div class="box"><small>Fallas</small>${esc(attendanceTotals.failures)}</div>
       <div class="box"><small>Retardos</small>${esc(attendanceTotals.late)}</div>
@@ -4172,7 +4294,20 @@ function exportData(type) {
   if (type === "padres") return downloadXlsx("padres", "Padres", state.parents.map(enrichParent));
   if (type === "contactos") return downloadXlsx("contactos_acudientes", "Contactos", state.contacts.map(enrichContact));
   if (type === "estudiantes") return downloadXlsx("estudiantes", "Estudiantes", state.students.map(enrichStudent));
-  if (type === "notas") return downloadXlsx("notas", "Notas", state.grades.map(enrichGrade));
+  if (type === "notas") return downloadXlsx("notas", "Notas", latestGradeRows().map(enrichGrade));
+}
+
+function latestGradeRows() {
+  const rows = new Map();
+  state.grades.forEach((record) => {
+    if (!record.studentId || !record.period) return;
+    const key = `${record.studentId}|${record.period}`;
+    const previous = rows.get(key);
+    if (!previous || String(record.updatedAt || "").localeCompare(String(previous.updatedAt || "")) >= 0) {
+      rows.set(key, record);
+    }
+  });
+  return [...rows.values()];
 }
 
 function enrichAttendance(record) {
@@ -4403,10 +4538,12 @@ function wireEvents() {
   });
   ["attendanceCourse", "attendanceModality", "attendanceDate", "attendancePeriod", "studentSearch"].forEach((id) => $(id).addEventListener("input", renderAttendance));
   ["gradesPeriod", "gradesCourse", "gradesModality", "gradesSearch"].forEach((id) => $(id).addEventListener("input", renderGrades));
+  ["summaryGradePeriod", "summaryGradeTeacher", "summaryGradeCourse"].forEach((id) => $(id).addEventListener("input", renderSummaryGradePreview));
   $("markAllV").addEventListener("click", markAllV);
   $("saveAttendance").addEventListener("click", saveAttendance);
   $("saveGrades").addEventListener("click", saveGrades);
   $("exportFinalGradesXlsx").addEventListener("click", exportFinalGradesXlsx);
+  $("exportSummaryCourseFinalGrades").addEventListener("click", exportSummaryCourseFinalGrades);
   $("exportSummaryFailures").addEventListener("click", () => exportSummary("failures"));
   $("exportSummaryLate").addEventListener("click", () => exportSummary("late"));
   $("exportSummaryNotes").addEventListener("click", () => exportSummary("notes"));
